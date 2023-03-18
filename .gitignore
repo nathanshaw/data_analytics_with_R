@@ -1,6 +1,8 @@
 *.png
 *.jpg
 *.jpeg
+*.pdf
+*.html
 
 *.DS_Store
 # History files
