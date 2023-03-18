@@ -5,30 +5,330 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+## Inital environment setup
+```{r setup}
+# Set CRAN mirror
+options(repos = c(CRAN = "http://cran.utstat.utoronto.ca/"))
+# we will need the dplyr package for mutate() and data frame manipulation
+install.packages("dplyr")
+install.packages("jsonlite")
+# The dplyr package provides a grammar of data manipulation, 
+# providing a consistent set of verbs that help you solve the 
+# most common data manipulation challenges: 
+# filtering rows, selecting columns, rearranging rows and 
+# columns, summarizing data, and creating new variables.
+library("dplyr")
+
+# The ggplot2 package is a system for declaratively creating 
+# graphics, based on The Grammar of Graphics. 
+# It provides a range of tools for constructing plots, 
+# from basic plotting of data to highly sophisticated and 
+# customized visualizations.
 library("ggplot2")
-setwd("data/elden_ring")
-weapon_data <- read.csv("weapons.csv")
-colnames(weapon_data)
+
+# The purrr package is a functional programming toolkit 
+# for R. It provides a complete and consistent set of tools 
+# for working with functions and vectors. It's main purpose 
+# is to allow you to work with data in a way that is more 
+# consistent with functional programming principles.
+library("purrr")
+
+# The tidyr package provides a set of functions to help 
+# organize messy data into a structured and tidy form. 
+# Tidy data has a specific structure where each variable 
+# is a column, each observation is a row, and each type of 
+# observational unit is a separate table.
+library("tidyr")
+
+# The jsonlite package provides functions to convert R objects 
+# to and from JSON format, which is a lightweight data-interchange 
+# format that is easy for humans to read and write, and easy for 
+# machines to parse and generate. It is commonly used for 
+# transmitting data between a server and a web application, 
+# as an alternative to XML.
+library("jsonlite")
+
 ```
 
-## R Markdown
+## Pull in weapon data from .CSV file
+```{r}
+setwd("../data/elden_ring")
+# if this file is not loading change its permissions using chmod =)
+all_weapons <- read.csv("weapons.csv")
+colnames(all_weapons)
+```
+## Initial investigation of the CSV file
+First lets probe the data a little bit to understand how it is being stored...
+```{r all_weapons_summary}
+summary(all_weapons)
+```
+## Data Cleaning
+Okay, cool, now lets rename our columns so they make more sense
+```{r}
+# rename columns to something more human friendly
+all_weapons <- all_weapons %>% 
+  rename(Category = Type,
+         Physical_Damage = Phy,
+         Magic_Damage = Mag,
+         Fire_Damage = Fir,
+         Lightning_Damage = Lit,
+         Holy_Damage = Hol,
+         Critical_Scaler = Cri,
+         Stamina_Drain = Sta,
+         Strength_Scaler = Str,
+         Dexterity_Scaler = Dex,
+         Intelligence_Scaler = Int,
+         Faith_Scaler = Fai,
+         Arcane_Scaler = Arc,
+         Special_Effect_Damage = Any,
+         Physical_Block_Damage = Phy.1,
+         Magic_Block_Damage = Mag.1,
+         Fire_Block_Damage = Fir.1,
+         Lightning_Block_Damage = Lit.1,
+         Holy_Block_Damage = Hol.1,
+         Boost = Bst,
+         Rest = Rst,
+         Weight = Wgt,
+         Upgrade_Items = Upgrade) %>%
+  mutate(across(Physical_Damage:Stamina_Drain, ~ifelse(. == "-", "0", .))) %>%
+  mutate(across(Special_Effect_Damage:Rest, ~ifelse(. == "-", "0", .)))
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r weapon_data_summary}
-summary(weapon_data)
+# sweet, lets check out our newly named data frame
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+Next we need to replace any NA and Nulls in the table with 0's
+```{r}
+str(all_weapons)
+```
+We also have to convert many of the damage numbers into ints from strings and create a column for Total_Damage and Total_Block_Damage
 
-```{r weapon_data_plot1, echo=FALSE}
-ggplot(data = weapon_data, mapping = aes(x = attack, y = defence)) + 
-  geom_point()
+```{r}
+# This code uses the mutate() function along with across() to apply the as.integer() function to multiple columns of all_weapons at once. The resulting dataframe will have the specified columns converted from strings to integers.
+all_weapons <- all_weapons %>%
+  mutate(across(c(Physical_Damage, Magic_Damage, Fire_Damage, Lightning_Damage, Holy_Damage, Stamina_Drain, Special_Effect_Damage, Physical_Block_Damage, Magic_Block_Damage, Fire_Block_Damage, Lightning_Block_Damage, Holy_Block_Damage, Boost, Rest), as.integer))
+
+## Create a new Column for "total damage" as a sum of all damage types
+all_weapons <- all_weapons %>% 
+  mutate(Total_Damage = Physical_Damage + Magic_Damage + Fire_Damage + Lightning_Damage + Holy_Damage) %>%
+  relocate(Total_Damage, .after = "Category") %>% 
+  mutate(Total_Block_Damage = Physical_Block_Damage + Magic_Block_Damage + Fire_Block_Damage + Lightning_Block_Damage + Holy_Block_Damage) %>%
+  relocate(Total_Block_Damage, .after = "Special_Effect_Damage")
+
+head(all_weapons)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+We might want to consider replacing the somber and regular smithing stones with 0 and 1 later on, but this should be good for now
+
+# Some initial plots
+```{r}
+ggplot(all_weapons, aes(x=Weight, y=Physical_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~Category) + 
+  labs(title="Comparison of Total Damage and Weight for Elden Ring Weapons")
+```
+## Investigating purely physical weapons
+```{r}
+# filter the weaponset to only include weapons with physical damage
+# this is true if total damage equals physial damage
+physical_weapons <- all_weapons %>% filter(., Physical_Damage == Total_Damage, Weight > 0, Physical_Damage > 0)
+print(length(physical_weapons))
+
+ggplot(physical_weapons, aes(x=Weight, y=Physical_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", formula = y ~ log(x), se=FALSE) +
+  scale_y_log10() +
+  guides(color=FALSE) +
+  labs(title="Comparison of Physical Damage and Weight for Elden Ring Weapons")
+```
+
+## Convert Damage Scaling to Integers
+To make our analysis easier, lets map our letter values for the Damage Scaling values to numbers
+- = 0
+E = 1
+D = 2
+C = 3
+B = 4
+A = 5
+S = 6
+
+Also, lets map our smithing_stones to 0 and somber_smithing_stones to 1
+
+```{r}
+# remap our values as strings
+all_weapons <- all_weapons %>% 
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "-", "0", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "E", "1", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "D", "2", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "C", "3", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "B", "4", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "A", "5", .))) %>%
+  mutate(across(Strength_Scaler:Arcane_Scaler, ~ifelse(. == "S", "6", .))) %>%
+  mutate(across(Upgrade_Items, ~ifelse(. == "Somber Smithing Stones", "1", .))) %>%
+  mutate(across(Upgrade_Items, ~ifelse(. == "Smithing Stones", "0", .)))
+
+# convert our string values to ints
+all_weapons <- all_weapons %>%
+  mutate(across(c(Strength_Scaler, Dexterity_Scaler, Faith_Scaler, Intelligence_Scaler, Arcane_Scaler), as.integer))
+
+head(all_weapons)
+```
+
+# Plotting Relationship between Total_Blocking_Damage and Total_Damage
+
+```{r}
+weapons_with_block_damage <- filter(all_weapons, Total_Block_Damage > 0)
+
+ggplot(weapons_with_block_damage, aes(x=Total_Damage, y=Total_Block_Damage, color=Weight, shape=Upgrade_Items)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se=FALSE) +
+  scale_y_log10() +
+  guides(color=FALSE) +
+  facet_wrap(~Upgrade_Items) +
+  labs(title="Comparison of Total Damage (x), Total Block Damage (y), and Weight (color)")
+```
+
+## Splitting Apart Staffs, and Seals into a group, Bows and Crossbows into a group, and all other weapons in final group
+
+```{r}
+magic_catalists <- filter(all_weapons, Category == "Glintstone Staff" | Category == "Sacred Seal")
+ranged_weapons <- filter(all_weapons, Category == "Bow" | Category == "Ballista" | Category == "Crossbow" | Category == "Greatbow" | Category == "Light Bow")
+melee_weapons <- filter(all_weapons, Category != "Glintstone Staff" | Category != "Sacred Seal" | Category != "Bow" | Category != "Ballista" | Category != "Crossbow" | Category != "Greatbow" | Category != "Light Bow")
+
+head(magic_catalists)
+head(ranged_weapons)
+head(melee_weapons)
+summary(magic_catalists)
+summary(ranged_weapons)
+summary(melee_weapons)
+```
+
+### Plotting the different categories separtely
+
+```{r}
+ggplot(melee_weapons, aes(x=Weight, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Total Damage (y) and Weight (x) for Elden Ring Melee Weapons")
+
+ggplot(ranged_weapons, aes(x=Weight, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Total Damage (y) and Weight (x) for Elden Ring Ranged Weapons")
+
+ggplot(magic_catalists, aes(x=Weight, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Comparison of Total Damage and Weight for Elden Ring Magic Catalists")
+```
+
+### Taking a look at comparing the attack damage and block damage for the weapons
+```{r}
+ggplot(melee_weapons, aes(x=Total_Block_Damage, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Total Damage (y) and Weight (x) for Elden Ring Melee Weapons")
+
+ggplot(ranged_weapons, aes(x=Total_Block_Damage, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Total Damage (y) and Weight (x) for Elden Ring Ranged Weapons")
+
+ggplot(magic_catalists, aes(x=Total_Block_Damage, y=Total_Damage)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Comparison of Total Damage and Weight for Elden Ring Magic Catalists")
+```
+## Sweet, now lets check out Dex scaled weapons
+```{r}
+dex_scaled_weapons <- filter(all_weapons, Dexterity_Scaler > 0)
+str_scaled_weapons <- filter(all_weapons, Strength_Scaler > 0)
+arc_scaled_weapons <- filter(all_weapons, Arcane_Scaler > 0)
+int_scaled_weapons <- filter(all_weapons, Intelligence_Scaler > 0)
+fai_scaled_weapons <- filter(all_weapons, Faith_Scaler > 0)
+
+head(dex_scaled_weapons)
+head(str_scaled_weapons)
+head(arc_scaled_weapons)
+head(int_scaled_weapons)
+head(fai_scaled_weapons)
+length(arc_scaled_weapons)
+length(fai_scaled_weapons)
+```
+
+```{r}
+df <- data.frame(
+  Scale_Type = c("Dexterity", "Strength", "Arcane", "Intelligence", "Faith"),
+  Count = c(length(dex_scaled_weapons),
+            length(str_scaled_weapons),
+            length(arc_scaled_weapons),
+            length(int_scaled_weapons),
+            length(fai_scaled_weapons))
+)
+
+df <- df[order(df$Scale_Type),]  # Sort the data frame by Scale_Type
+
+ggplot(df, aes(x = "", y = Count, fill = Scale_Type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Count, y = cumsum(Count) - (0.5 * Count)), color = "white") +
+  coord_flip() +
+  labs(title = "Weapons by Scale Type", x = NULL, y = NULL) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+```
+## Very Interesting, now lets see what the total scale values for all these categories...
+```{r}
+df <- data.frame(
+  Scale_Type = c("Dexterity", "Strength", "Arcane", "Intelligence", "Faith"),
+  Count = c(length(dex_scaled_weapons),
+            length(str_scaled_weapons),
+            length(arc_scaled_weapons),
+            length(int_scaled_weapons),
+            length(fai_scaled_weapons)),
+  
+  Scale_Totals = c(sum(dex_scaled_weapons$Dexterity_Scaler),
+                   sum(str_scaled_weapons$Strength_Scaler),
+                   sum(arc_scaled_weapons$Arcane_Scaler),
+                   sum(int_scaled_weapons$Intelligence_Scaler),
+                   sum(fai_scaled_weapons$Faith_Scaler)
+            )
+  )
+
+ggplot(df, aes(x = Scale_Type, y = Scale_Totals, fill = Scale_Type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Scale_Totals, y = cumsum(Count) - (0.5 * Count)), color = "white") +
+  coord_flip() +
+  labs(title = "Total Scale Weight", x = NULL, y = NULL) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(df, aes(x = Scale_Type, y = Scale_Totals / Count, fill = Scale_Type)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Scale_Totals / Count, y = cumsum(Count) - (0.5 * Count)), color = "white") +
+  coord_flip() +
+  labs(title = "Average Scale Weight", x = NULL, y = NULL) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+```
+
+# Hmm, there is something odd going on with the Arcane Weapons....
+
+```{r}
+library(dplyr)
+
+arc_weap_summary <- arc_scaled_weapons %>%
+  count(Arcane_Scaler) %>%
+  mutate(Scale_Amount = factor(Arcane_Scaler,
+                               levels = c("1", "2", "3", "4", "5", "6"),
+                               labels = c("E", "D", "C", "B", "A", "S"))) %>%
+  select(Scale_Amount, n)
+
+ggplot(arc_weap_summary, aes(x = Scale_Amount, y = n)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), vjust = -0.5) +
+  labs(title = "Arcane Weapons by Scale Amount") +
+  theme_minimal()
+
+```
